@@ -10,7 +10,11 @@ import { MobileControls } from '../controls/MobileControls.js';
 import { GameHUD } from '../ui/GameHUD.js';
 import { MainMenu } from '../ui/MainMenu.js';
 import { GameOver } from '../ui/GameOver.js';
+import { Orientation } from '../ui/Orientation.js';
+import { NamePrompt } from '../ui/NamePrompt.js';
+import { Celebration } from '../ui/Celebration.js';
 import { GameStorage } from '../utils/Storage.js';
+import { Ranking, buildLiveRows, rankFor } from '../utils/Ranking.js';
 import { AudioManager } from '../audio/AudioManager.js';
 import {
   CRUISE_SPEED, MIN_SPEED, NITRO_SPEED, ACCEL, BRAKE_DECEL, COAST_DECEL, NITRO_ACCEL,
@@ -36,17 +40,36 @@ export class Game {
     this.audio = new AudioManager();
 
     this.kb = new KeyboardControls();
-    this.touch = new MobileControls();
+    this.touch = new MobileControls(document.body, { onReset: () => this.startRace() });
+    this.orient = new Orientation(document.body);
     this.kb.onPause = () => this.togglePause();
     this.kb.onAction = (code) => {
       if (this.state === MENU && code === 'Enter') this.startRace();
       else if (this.state === OVER && this.overShown) this.startRace();
     };
 
-    this.best = GameStorage.getBest();
+    // ---- identity (device id + one-time name, no auth) ----
+    this.deviceId = GameStorage.getDeviceId();
+    this.name = GameStorage.getUserName();
+    this.settings = GameStorage.getSettings();
+
+    // ---- ranking state ----
+    this._globalScores = [];
+    this._overtaken = new Set();
+    this._pbNotified = false;
+    this._overReady = false;
+    this._overPayload = null;
+
     this.hud = new GameHUD(document.body, { onPause: () => this.togglePause(), onTheme: () => this.toggleTheme() });
-    this.menu = new MainMenu(document.body, { onStart: () => this.startRace() });
-    this.gameOverUI = new GameOver(document.body, { onRestart: () => this.startRace() });
+    this.menu = new MainMenu(document.body, {
+      onStart: () => this.startRace(),
+      onSettingsChange: (p) => this._onSettingsChange(p),
+      onCalibrate: () => this.touch.calibrate(),
+    });
+    this.gameOverUI = new GameOver(document.body, {
+      onRestart: () => this.startRace(),
+      onMenu: () => this._enterMenu(),
+    });
 
     // run state
     this.state = MENU;
@@ -71,12 +94,44 @@ export class Game {
     window.addEventListener('pointerdown', this._unlockAudio);
     window.addEventListener('keydown', this._unlockAudio);
 
-    this._enterMenu();
+    // Live ranking subscription (refreshes cache + the open menu / live panel).
+    this._unsubRank = Ranking.subscribe((rows) => {
+      this._globalScores = rows;
+      this._onRankUpdate();
+    });
+    Ranking.getLeaderboard(100).then((rows) => { this._globalScores = rows; this._onRankUpdate(); });
+
+    // entry — name prompt only on first launch, otherwise straight to menu
+    if (GameStorage.isRegistered()) this._enterMenu();
+    else this._showNamePrompt();
+
     this.loop = new GameLoop((dt) => this.update(dt), () => this.sm.render());
   }
 
   run() { this.loop.start(); }
   toggleTheme() { this.sm.setTheme(this.sm.themeName === 'day' ? 'night' : 'day'); }
+
+  _showNamePrompt() {
+    this.namePrompt = new NamePrompt(document.body, { onSubmit: (n) => {
+      GameStorage.setUserName(n);
+      this.name = n;
+      if (this.namePrompt) { this.namePrompt.remove(); this.namePrompt = null; }
+      this._enterMenu();
+    }});
+    setTimeout(() => { if (this.namePrompt) this.namePrompt.focus(); }, 50);
+  }
+
+  _onSettingsChange(partial) {
+    this.settings = GameStorage.saveSettings(partial);
+    if (partial.controlMode) this.touch.setMode(this.settings.controlMode);
+    if (partial.tiltSensitivity != null) this.touch.setSensitivity(this.settings.tiltSensitivity);
+    if (partial.tiltInvert != null) this.touch.setInvert(this.settings.tiltInvert);
+  }
+
+  /** Called whenever the cached leaderboard changes (realtime or initial fetch). */
+  _onRankUpdate() {
+    if (this.state === MENU && this.menu) this.menu.updateRanks(this._globalScores);
+  }
 
   // ---------- state transitions ----------
   _enterMenu() {
@@ -85,7 +140,19 @@ export class Game {
     this.player.reset();
     this.cruise = CRUISE_SPEED; this.speed = CRUISE_SPEED;
     this.hud.hide(); this.gameOverUI.hide();
-    this.menu.show(this.best, this.touch.enabled);
+    this.name = GameStorage.getUserName();
+    this.settings = GameStorage.getSettings();
+    const best = GameStorage.getBest();
+    const board = this._globalScores && this._globalScores.length ? this._globalScores : null;
+    this.menu.show({
+      best, isTouch: this.touch.enabled, name: this.name,
+      leaderboard: board, settings: this.settings,
+    });
+    // (re)fetch the latest leaderboard for the RANKS tab
+    Ranking.getLeaderboard(100).then((rows) => {
+      this._globalScores = rows;
+      if (this.state === MENU) this.menu.updateRanks(rows);
+    });
   }
 
   startRace() {
@@ -98,13 +165,25 @@ export class Game {
     this.nitro = NITRO_MAX; this.nitroActive = false;
     this.kbHold = 0; this.freeSteer = false; this.shake = 0;
     this.overShown = false; this.newBest = false; this.goTimer = 0;
+    this._overReady = false; this._overPayload = null;
+
+    this.name = GameStorage.getUserName();
+    this._overtaken = new Set();
+    this._pbNotified = false;
+    // make sure we have rival data for the live panel
+    if (!this._globalScores || !this._globalScores.length) {
+      Ranking.getLeaderboard(100).then((rows) => { this._globalScores = rows; });
+    }
+
     this.player.reset();
     this.traffic.reset(this.level, this.cruise);
     this.menu.hide(); this.gameOverUI.hide();
     this.hud.setLives(LIVES_MAX, false);
-    this.hud.setBest(this.best.score);
+    this.hud.setBest(GameStorage.getBest().score);
+    this.hud.renderLiveRank(buildLiveRows(this._globalScores, this.deviceId, this.name, 0));
     this.hud.show();
     this.state = PLAYING;
+    this.orient.requestLandscape();
   }
 
   togglePause() {
@@ -116,23 +195,31 @@ export class Game {
 
   _gameOver() {
     this.state = OVER;
-    this.goTimer = 0; this.overShown = false;
+    this.goTimer = 0; this.overShown = false; this._overReady = false;
     this.traffic.stopSpawning();
     this.nitroActive = false;
-    this.newBest = this.score > this.best.score;
-    if (this.newBest) {
-      this.best = { score: this.score, km: this.distance / 1000, level: this.level };
-      GameStorage.saveBest(this.best);
-    }
+    this._endRun(); // async: submit + fetch full leaderboard
     this.hud.banner('GAME OVER', 'bad');
   }
 
-  getState() {
-    return {
-      state: this.state, speed: this.speed, kmh: Math.round(this.speed * KMH_FACTOR),
-      nitro: this.nitro, nitroActive: this.nitroActive, lane: this.player.laneIndex,
-      lives: this.lives, level: this.level, km: this.distance / 1000, score: this.score, paused: this.paused,
+  async _endRun() {
+    const prevBest = GameStorage.getBest();
+    const prevRank = rankFor(this._globalScores, prevBest.score);
+    await Ranking.submitScore({
+      deviceId: this.deviceId, name: this.name,
+      score: this.score, distance: this.distance, level: this.level,
+    });
+    GameStorage.saveBest({ score: this.score, distance: this.distance, level: this.level });
+    // refresh cache with the new score included
+    this._globalScores = await Ranking.getLeaderboard(100);
+    const newBest = this.score > prevBest.score;
+    const newRank = rankFor(this._globalScores, Math.max(prevBest.score, this.score));
+    this._overPayload = {
+      score: this.score, distance: this.distance, level: this.level,
+      best: Math.max(prevBest.score, this.score), newBest,
+      prevRank, newRank, leaderboard: this._globalScores, meId: this.deviceId,
     };
+    this._overReady = true;
   }
 
   // ---------- per-frame ----------
@@ -143,7 +230,7 @@ export class Game {
 
   _applySteering(dt) {
     const p = this.player;
-    for (const src of [this.kb, this.touch]) { // lane taps, swipes
+    for (const src of [this.kb, this.touch]) {
       let d;
       while ((d = src.consumeLane()) !== 0) p.moveLane(d);
     }
@@ -153,7 +240,7 @@ export class Game {
       this.kbHold += dt;
       if (this.kbHold > HOLD_FREE) { p.steerBy(ks * LAT_SPEED * dt); free = true; }
     } else this.kbHold = 0;
-    if (this.touch.steering) { // steering wheel: proportional, slightly eased
+    if (this.touch.steering) { // wheel / buttons / tilt: proportional steering
       const s = this.touch.state.steer;
       p.steerBy(Math.sign(s) * Math.pow(Math.abs(s), 1.25) * LAT_SPEED * dt);
       free = true;
@@ -209,7 +296,7 @@ export class Game {
       nitro: this.nitroActive && playing,
     });
 
-    if (playing) { this._updateProgress(dt); this._checkCollisions(); }
+    if (playing) { this._updateProgress(dt); this._checkCollisions(); this._updateRanking(); }
     else if (this.state === OVER) this._updateOver(dt);
 
     this._updateCamera(dt);
@@ -222,6 +309,27 @@ export class Game {
     this.score = Math.floor(this.distance) + this.bonus;
     const lvl = 1 + Math.floor(km / LEVEL_KM);
     if (lvl > this.level) this._levelUp(lvl);
+  }
+
+  /** Live ranking panel + overtake / personal-best celebration. */
+  _updateRanking() {
+    const score = this.score;
+    this.hud.renderLiveRank(buildLiveRows(this._globalScores, this.deviceId, this.name, score));
+    for (const o of this._globalScores) {
+      if (o.deviceId === this.deviceId) continue;
+      if (o.score > 0 && o.score <= score && !this._overtaken.has(o.deviceId)) {
+        this._overtaken.add(o.deviceId);
+        this.hud.toast(`You just overtook ${o.name}!`);
+        Celebration.burst();
+      }
+    }
+    const me = this._globalScores.find((s) => s.deviceId === this.deviceId);
+    const pb = me ? me.score : GameStorage.getBest().score;
+    if (!this._pbNotified && pb > 0 && score > pb) {
+      this._pbNotified = true;
+      this.hud.toast('NEW PERSONAL BEST!');
+      Celebration.burst();
+    }
   }
 
   _levelUp(l) {
@@ -240,7 +348,6 @@ export class Game {
     if (p.invincibleT > 0) return;
     const car = this.traffic.hit(p.x, PLAYER_HW, PLAYER_HL);
     if (car) {
-      // Slower than the car we touched: not a foul. Horn, and that car eases aside.
       if (this.speed < car.v || car.nudgeT > 0) {
         if (this.traffic.nudgeAside(car)) {
           this.audio.horn();
@@ -282,19 +389,17 @@ export class Game {
 
   _updateOver(dt) {
     this.goTimer += dt;
-    if (!this.overShown && this.goTimer > 1.1) {
+    if (!this.overShown && this.goTimer > 1.1 && this._overReady) {
       this.overShown = true;
-      this.gameOverUI.show({
-        score: this.score, km: this.distance / 1000, level: this.level, best: this.best.score, newBest: this.newBest,
-      });
+      this.gameOverUI.show(this._overPayload);
     }
   }
 
   _updateHud() {
     const h = this.hud, km = this.distance / 1000;
     h.setScore(this.score);
-    h.setBest(Math.max(this.best.score, this.score));
-    h.setKm(km);
+    h.setBest(Math.max(GameStorage.getBest().score, this.score));
+    h.setDistance(this.distance);
     h.setLevel(this.level, (km % LEVEL_KM) / LEVEL_KM);
     h.setSpeed(Math.round(this.speed * KMH_FACTOR));
     h.setNitro((this.nitro / NITRO_MAX) * 100, this.nitroActive);
@@ -321,9 +426,10 @@ export class Game {
     document.removeEventListener('visibilitychange', this._onVis);
     window.removeEventListener('pointerdown', this._unlockAudio);
     window.removeEventListener('keydown', this._unlockAudio);
+    if (this._unsubRank) this._unsubRank();
     this.audio.dispose();
     this.loop.dispose();
-    this.kb.dispose(); this.touch.dispose();
+    this.kb.dispose(); this.touch.dispose(); this.orient.dispose();
     this.effects.dispose(); this.traffic.dispose();
     this.player.dispose(); this.environment.dispose(); this.road.dispose(); this.sm.dispose();
   }

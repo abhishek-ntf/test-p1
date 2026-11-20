@@ -4,7 +4,7 @@ import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { WHEEL_RADIUS, BASE_SPEED, LANE_X, STEER_LIMIT, RAIL_X, stepLateral } from '../utils/Constants.js';
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const MODEL_URL = '/models/ferrari.glb';
+const MODEL_URL = `${import.meta.env.BASE_URL}models/ferrari.glb`;
 const TARGET_LENGTH = 4.15;
 
 export class PlayerCar {
@@ -61,7 +61,7 @@ export class PlayerCar {
 
   _loadModel() {
     const draco = new DRACOLoader();
-    draco.setDecoderPath('/draco/');
+    draco.setDecoderPath(`${import.meta.env.BASE_URL}draco/`);
     this.draco = draco;
     const loader = new GLTFLoader();
     loader.setDRACOLoader(draco);
