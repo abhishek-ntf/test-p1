@@ -1,4 +1,4 @@
-/** Engine rumble, nitro whoosh, horn and impact — all synthesized, no audio files.  */
+/** Engine rumble, nitro whoosh, horn and impact — all synthesized, no audio files.   */
 export class AudioManager {
   constructor() {
     this.ctx = null;
