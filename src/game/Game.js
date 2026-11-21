@@ -13,6 +13,7 @@ import { GameOver } from '../ui/GameOver.js';
 import { Orientation } from '../ui/Orientation.js';
 import { NamePrompt } from '../ui/NamePrompt.js';
 import { Celebration } from '../ui/Celebration.js';
+import { SteeringPicker } from '../ui/SteeringPicker.js';
 import { GameStorage } from '../utils/Storage.js';
 import { Ranking, buildLiveRows, rankFor } from '../utils/Ranking.js';
 import { AudioManager } from '../audio/AudioManager.js';
@@ -40,8 +41,16 @@ export class Game {
     this.audio = new AudioManager();
 
     this.kb = new KeyboardControls();
-    this.touch = new MobileControls(document.body, { onReset: () => this.startRace() });
+    this.touch = new MobileControls(document.body, {
+      onReset: () => this.startRace(),
+      onSteerSwitch: () => this._showSteerPicker(),
+    });
     this.orient = new Orientation(document.body);
+
+    // Steering picker (mobile only – shown on first launch or when user taps STEER button)
+    this.steerPicker = new SteeringPicker(document.body, {
+      onSelect: (mode) => this._onSteerModeSelect(mode),
+    });
     this.kb.onPause = () => this.togglePause();
     this.kb.onAction = (code) => {
       if (this.state === MENU && code === 'Enter') this.startRace();
@@ -102,8 +111,25 @@ export class Game {
     Ranking.getLeaderboard(100).then((rows) => { this._globalScores = rows; this._onRankUpdate(); });
 
     // entry — name prompt only on first launch, otherwise straight to menu
-    if (GameStorage.isRegistered()) this._enterMenu();
-    else this._showNamePrompt();
+    if (GameStorage.isRegistered()) {
+      // On mobile: show steering picker on very first game launch (no saved controlMode)
+      const s = GameStorage.getSettings();
+      if (this.touch.enabled && !s.controlMode) {
+        // Show picker, then enter menu after selection
+        this.steerPicker.show('arrows');
+        // override onSelect to enter menu after first selection
+        this.steerPicker.onSelect = (mode) => {
+          this._onSteerModeSelect(mode);
+          // restore normal onSelect
+          this.steerPicker.onSelect = (m) => this._onSteerModeSelect(m);
+          this._enterMenu();
+        };
+      } else {
+        this._enterMenu();
+      }
+    } else {
+      this._showNamePrompt();
+    }
 
     this.loop = new GameLoop((dt) => this.update(dt), () => this.sm.render());
   }
@@ -116,7 +142,17 @@ export class Game {
       GameStorage.setUserName(n);
       this.name = n;
       if (this.namePrompt) { this.namePrompt.remove(); this.namePrompt = null; }
-      this._enterMenu();
+      // On mobile first install: show steering picker before the menu
+      if (this.touch.enabled) {
+        this.steerPicker.show('arrows');
+        this.steerPicker.onSelect = (mode) => {
+          this._onSteerModeSelect(mode);
+          this.steerPicker.onSelect = (m) => this._onSteerModeSelect(m);
+          this._enterMenu();
+        };
+      } else {
+        this._enterMenu();
+      }
     }});
     setTimeout(() => { if (this.namePrompt) this.namePrompt.focus(); }, 50);
   }
@@ -126,6 +162,17 @@ export class Game {
     if (partial.controlMode) this.touch.setMode(this.settings.controlMode);
     if (partial.tiltSensitivity != null) this.touch.setSensitivity(this.settings.tiltSensitivity);
     if (partial.tiltInvert != null) this.touch.setInvert(this.settings.tiltInvert);
+  }
+
+  _showSteerPicker() {
+    this.steerPicker.show(this.settings.controlMode || 'arrows');
+  }
+
+  _onSteerModeSelect(mode) {
+    this.touch.setMode(mode);
+    this.settings = GameStorage.saveSettings({ controlMode: mode });
+    // For motion mode on iOS, calibrate() triggers the permission request
+    if (mode === 'motion') this.touch.calibrate();
   }
 
   /** Called whenever the cached leaderboard changes (realtime or initial fetch). */
@@ -429,7 +476,7 @@ export class Game {
     if (this._unsubRank) this._unsubRank();
     this.audio.dispose();
     this.loop.dispose();
-    this.kb.dispose(); this.touch.dispose(); this.orient.dispose();
+    this.kb.dispose(); this.touch.dispose(); this.orient.dispose(); this.steerPicker.dispose();
     this.effects.dispose(); this.traffic.dispose();
     this.player.dispose(); this.environment.dispose(); this.road.dispose(); this.sm.dispose();
   }

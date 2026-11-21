@@ -33,42 +33,196 @@ html, body {
 #pause h1 { margin: 0 0 6px; letter-spacing: 6px; color: var(--neon); text-shadow: 0 0 14px var(--neon); }
 #pause p { margin: 0; opacity: .7; font-size: 13px; }
 
-/* ---- Mobile controls ---- */
-#mobile-controls { position: fixed; inset: 0; z-index: 10; pointer-events: none; }
+/* ═══════════════════════════════════════════════════════════════════════
+   MOBILE CONTROLS  —  layout matching the reference image
+   Left zone  : two big circle arrow buttons  < and >
+   Right zone : HORN + BOOST (top row)  |  BRAKE + ACCELERATE (pedals)
+   ═══════════════════════════════════════════════════════════════════════ */
+#mobile-controls {
+  position: fixed; inset: 0; z-index: 10; pointer-events: none;
+}
 #mobile-controls[hidden] { display: none; }
-.wheel {
+
+/* ── Shared reset for every MC button ── */
+#mobile-controls button {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  pointer-events: auto; touch-action: none; cursor: pointer;
+  border: none; outline: none; -webkit-tap-highlight-color: transparent;
+  transition: transform .07s ease, opacity .07s ease;
+  user-select: none; -webkit-user-select: none;
+}
+#mobile-controls button.active { transform: scale(.9); opacity: .8; }
+
+/* ── Left zone (arrows) ── */
+.mc-left-zone {
+  position: absolute;
+  left: calc(var(--safe-l) + 10px);
+  bottom: calc(var(--safe-b) + 14px);
+  display: flex;
+  flex-direction: row;
+  gap: clamp(8px, 2vw, 16px);
+  align-items: center;
+  pointer-events: none;
+}
+
+/* Big circle arrow */
+.mc-arrow {
+  width:  clamp(72px, 18vmin, 100px);
+  height: clamp(72px, 18vmin, 100px);
+  border-radius: 50%;
+  background: rgba(20, 60, 120, 0.72);
+  border: 2.5px solid rgba(80, 160, 255, 0.7);
+  box-shadow: 0 4px 18px rgba(0, 80, 220, 0.45), inset 0 1px 0 rgba(255,255,255,.12);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.mc-arrow svg {
+  width: 52%; height: 52%; display: block;
+  filter: drop-shadow(0 0 4px rgba(255,255,255,.4));
+}
+.mc-arrow.active {
+  background: rgba(30, 80, 200, 0.85);
+  box-shadow: 0 2px 10px rgba(0, 80, 220, 0.6), 0 0 20px rgba(60, 130, 255, 0.5);
+}
+
+/* Tilt badge (shows when tilt mode active) */
+.mc-tilt-badge {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 10px; border-radius: 99px;
+  background: rgba(0,0,0,.4); border: 1px solid rgba(0,229,255,.4);
+  font: 700 10px system-ui; letter-spacing: 2px; color: #cfe9ff;
+  pointer-events: none;
+}
+.mc-tilt-badge.hidden { display: none; }
+.mc-tilt-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; }
+.mc-tilt-badge.on { border-color: var(--neon); }
+.mc-tilt-badge.on .mc-tilt-dot { background: var(--neon); box-shadow: 0 0 6px var(--neon); }
+
+/* ── Right zone ── */
+.mc-right-zone {
+  position: absolute;
+  right: calc(var(--safe-r) + 10px);
+  bottom: calc(var(--safe-b) + 14px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: clamp(6px, 1.5vw, 12px);
+  pointer-events: none;
+}
+
+/* Top row: HORN + BOOST */
+.mc-top-row {
+  display: flex;
+  flex-direction: row;
+  gap: clamp(8px, 2vw, 14px);
+  align-items: flex-end;
+}
+
+/* Small circle buttons */
+.mc-small-btn {
+  width:  clamp(58px, 14vmin, 76px);
+  height: clamp(58px, 14vmin, 76px);
+  border-radius: 50%;
+  background: rgba(20, 40, 80, 0.72);
+  border: 2px solid rgba(80, 160, 255, 0.55);
+  box-shadow: 0 3px 12px rgba(0, 50, 180, 0.4), inset 0 1px 0 rgba(255,255,255,.1);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  gap: 3px;
+}
+.mc-small-btn .mc-btn-icon { display: flex; align-items: center; justify-content: center; }
+.mc-small-btn svg { width: clamp(20px, 5vmin, 28px); height: clamp(20px, 5vmin, 28px); display: block; }
+.mc-btn-label {
+  font: 800 clamp(8px, 2vmin, 10px) system-ui;
+  letter-spacing: 1px; color: #cfe9ff; line-height: 1;
+}
+/* HORN — yellow accent */
+.mc-small-btn.horn {
+  border-color: rgba(255, 210, 0, 0.7);
+  box-shadow: 0 3px 12px rgba(220, 160, 0, 0.35), inset 0 1px 0 rgba(255,255,255,.1);
+}
+.mc-small-btn.horn.active { background: rgba(200, 140, 0, 0.5); }
+/* BOOST — cyan accent */
+.mc-small-btn.boost {
+  background: rgba(0, 60, 100, 0.72);
+  border-color: rgba(0, 229, 255, 0.75);
+  box-shadow: 0 3px 16px rgba(0, 180, 255, 0.4), inset 0 1px 0 rgba(255,255,255,.1);
+}
+.mc-small-btn.boost.active { background: rgba(0, 150, 220, 0.5); box-shadow: 0 0 22px rgba(0,229,255,.6); }
+.mc-small-btn.boost .mc-btn-label { color: #00e5ff; }
+
+/* Pedal row: BRAKE + ACCELERATE */
+.mc-pedal-row {
+  display: flex;
+  flex-direction: row;
+  gap: clamp(6px, 1.5vw, 10px);
+  align-items: flex-end;
+}
+
+/* Pedal button (rectangular, like a real pedal) */
+.mc-pedal {
+  width:  clamp(72px, 17vmin, 96px);
+  height: clamp(72px, 17vmin, 92px);
+  border-radius: 10px;
+  gap: 5px;
+  background: rgba(30, 40, 65, 0.80);
+  border: 2px solid rgba(140, 160, 200, 0.45);
+  box-shadow: 0 4px 14px rgba(0,0,0,.45),
+              inset 0 1px 0 rgba(255,255,255,.12),
+              inset 0 -3px 0 rgba(0,0,0,.35);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.mc-pedal-icon { display: flex; align-items: center; justify-content: center; }
+.mc-pedal-icon svg { width: clamp(34px, 8vmin, 46px); height: auto; display: block; }
+.mc-pedal-label {
+  font: 800 clamp(8px, 1.8vmin, 11px) system-ui;
+  letter-spacing: 1px; color: #cfe9ff; line-height: 1;
+}
+/* BRAKE — red tint */
+.mc-pedal.brake {
+  border-color: rgba(230, 60, 60, 0.6);
+  box-shadow: 0 4px 14px rgba(180,0,0,.3), inset 0 1px 0 rgba(255,255,255,.1), inset 0 -3px 0 rgba(0,0,0,.35);
+}
+.mc-pedal.brake.active  { background: rgba(160, 20, 20, 0.6); box-shadow: 0 0 18px rgba(255,60,60,.5); }
+/* ACCELERATE — green tint */
+.mc-pedal.accel {
+  border-color: rgba(40, 200, 80, 0.65);
+  box-shadow: 0 4px 14px rgba(0,160,60,.3), inset 0 1px 0 rgba(255,255,255,.1), inset 0 -3px 0 rgba(0,0,0,.35);
+}
+.mc-pedal.accel.active  { background: rgba(10, 130, 40, 0.6); box-shadow: 0 0 20px rgba(60,255,100,.45); }
+
+/* ── Virtual wheel (mode=wheel) ── */
+.mc-wheel {
   position: absolute; pointer-events: auto; touch-action: none;
-  width: clamp(120px, 28vmin, 170px); height: clamp(120px, 28vmin, 170px);
-  left: calc(var(--safe-l) + 14px); bottom: calc(var(--safe-b) + 20px);
-  filter: drop-shadow(0 0 10px rgba(0, 229, 255, .45));
+  width:  clamp(110px, 26vmin, 158px);
+  height: clamp(110px, 26vmin, 158px);
+  left: calc(var(--safe-l) + 14px);
+  bottom: calc(var(--safe-b) + 20px);
+  filter: drop-shadow(0 0 10px rgba(0,229,255,.45));
   transform: rotate(0rad); will-change: transform;
 }
-.wheel svg { width: 100%; height: 100%; display: block; pointer-events: none; }
-.wheel.active { filter: drop-shadow(0 0 16px rgba(0, 229, 255, .9)); }
-.ctrl {
-  position: absolute; pointer-events: auto; touch-action: none;
-  width: 84px; height: 84px; border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
-  color: #fff; font: 700 14px system-ui, sans-serif; letter-spacing: 1px;
-  background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.5);
-  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 0 16px rgba(0, 229, 255, 0.25);
-  transition: transform .08s, background .08s;
+.mc-wheel svg { width: 100%; height: 100%; display: block; pointer-events: none; }
+.mc-wheel.active { filter: drop-shadow(0 0 18px rgba(0,229,255,.9)); }
+
+/* ── Tilt enable button ── */
+.mc-tilt-enable {
+  position: absolute;
+  left: calc(var(--safe-l) + 16px);
+  bottom: calc(var(--safe-b) + 90px);
+  pointer-events: auto;
+  padding: 10px 16px; border-radius: 10px; border: 0;
+  font: 800 11px system-ui; letter-spacing: 1px; color: #05070f;
+  background: linear-gradient(135deg, var(--neon), #7cf3ff);
+  box-shadow: 0 0 14px rgba(0,229,255,.5);
 }
-.ctrl.active { transform: scale(.92); background: rgba(0, 229, 255, 0.35); }
-.ctrl-brake { right: calc(var(--safe-r) + 14px); bottom: calc(var(--safe-b) + 26px); }
-.ctrl-nitro {
-  right: calc(var(--safe-r) + 108px); bottom: calc(var(--safe-b) + 26px);
-  width: 92px; height: 92px;
-  border-color: rgba(255, 42, 109, 0.7); box-shadow: 0 0 18px rgba(255, 42, 109, 0.4);
+.mc-tilt-enable.hidden { display: none; }
+
+/* ── Landscape compact mode ── */
+@media (orientation: landscape) and (max-height: 440px) {
+  .mc-arrow  { width: clamp(60px,15vmin,78px); height: clamp(60px,15vmin,78px); }
+  .mc-pedal  { width: clamp(60px,14vmin,76px); height: clamp(58px,14vmin,74px); }
+  .mc-small-btn { width: clamp(50px,12vmin,64px); height: clamp(50px,12vmin,64px); }
+  .mc-left-zone  { bottom: calc(var(--safe-b) + 8px); gap: 8px; }
+  .mc-right-zone { bottom: calc(var(--safe-b) + 8px); gap: 6px; }
 }
-.ctrl-nitro.active { background: rgba(255, 42, 109, 0.45); }
-.ctrl-horn {
-  right: calc(var(--safe-r) + 24px); bottom: calc(var(--safe-b) + 122px);
-  width: 68px; height: 68px; font-size: 12px;
-  border-color: rgba(255, 196, 40, 0.8); box-shadow: 0 0 16px rgba(255, 180, 0, 0.4);
-}
-.ctrl-horn.active { background: rgba(255, 180, 0, 0.45); }
 
 /* ---- HUD ---- */
 #hud {
@@ -249,39 +403,7 @@ html, body {
 #rotate-overlay p { margin: 0; opacity: .7; font-size: 13px; }
 @keyframes rot { 0%,100% { transform: rotate(0); } 50% { transform: rotate(-90deg); } }
 
-/* ---- Mobile controls: action cluster + steering modes ---- */
-.ctrl-cluster {
-  position: absolute; right: calc(var(--safe-r) + 12px); bottom: calc(var(--safe-b) + 18px);
-  display: flex; gap: 7px; align-items: flex-end; pointer-events: none;
-}
-.ctrl-cluster .ctrl {
-  position: static; pointer-events: auto;
-  width: clamp(56px, 13vmin, 76px); height: clamp(56px, 13vmin, 76px); font-size: clamp(10px, 2.4vmin, 13px);
-}
-.ctrl-cluster .ctrl-nitro { border-color: rgba(255,42,109,.7); box-shadow: 0 0 14px rgba(255,42,109,.4); }
-.ctrl-cluster .ctrl-nitro.active { background: rgba(255,42,109,.45); }
-.ctrl-cluster .ctrl-reset { font-size: 9px; letter-spacing: 1px; border-color: rgba(255,196,40,.7); box-shadow: 0 0 12px rgba(255,180,0,.3); }
-.ctrl-cluster .ctrl-reset.active { background: rgba(255,180,0,.4); }
-
-.steer-arrows {
-  position: absolute; left: calc(var(--safe-l) + 14px); bottom: calc(var(--safe-b) + 20px);
-  display: flex; gap: 10px; pointer-events: none;
-}
-.steer-arrows .steer-arrow { position: static; pointer-events: auto; width: clamp(64px, 15vmin, 92px); height: clamp(64px, 15vmin, 92px); }
-.steer-arrows .steer-arrow svg { width: 56%; height: 56%; }
-.tilt-badge {
-  position: absolute; left: calc(var(--safe-l) + 16px); bottom: calc(var(--safe-b) + 24px);
-  display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 99px;
-  background: rgba(255,255,255,.06); border: 1px solid rgba(0,229,255,.4); font: 700 11px system-ui; letter-spacing: 2px; color: #cfe9ff;
-}
-.tilt-badge .tilt-dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
-.tilt-badge.on { border-color: var(--neon); box-shadow: 0 0 12px rgba(0,229,255,.4); }
-.tilt-badge.on .tilt-dot { background: var(--neon); box-shadow: 0 0 8px var(--neon); }
-.tilt-enable {
-  position: absolute; left: calc(var(--safe-l) + 16px); bottom: calc(var(--safe-b) + 72px);
-  pointer-events: auto; width: auto; padding: 10px 14px; border-radius: 10px; font-size: 11px; letter-spacing: 1px;
-  color: #05070f; background: linear-gradient(135deg, var(--neon), #7cf3ff); border: 0;
-}
+/* ---- Mobile controls: old cluster / steer-arrows rules removed (see mc-* above) ---- */
 
 /* ---- Responsive: landscape phones ---- */
 @media (orientation: landscape) and (max-height: 480px) {
@@ -345,15 +467,134 @@ html, body {
 /* ===================== Game-over full leaderboard ===================== */
 .board.full { max-height: 46vh; overflow-y: auto; margin: 10px 0 14px; }
 
-/* ===================== Mobile buttons: ensure they are visible ===================== */
-.ctrl-cluster .ctrl {
-  background: rgba(10, 16, 28, 0.55) !important;
-  box-shadow: 0 0 14px rgba(0, 229, 255, 0.25);
-}
+/* ===================== Mobile buttons visible fix (handled by mc-* rules above) ===================== */
 
 /* Tighten HUD on short landscape screens so the ranking panel fits */
 @media (orientation: landscape) and (max-height: 460px) {
   .live-rank { width: 150px; padding: 5px 7px; }
   .lr-row { font-size: 10px; }
   .lr-head { font-size: 8px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   STEERING PICKER — bottom-sheet modal
+   ═══════════════════════════════════════════════════════════════════════ */
+#steering-picker {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; flex-direction: column; justify-content: flex-end;
+}
+#steering-picker.hidden { display: none !important; }
+
+/* Backdrop */
+.sp-backdrop {
+  position: absolute; inset: 0;
+  background: rgba(3, 6, 20, 0.72);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  opacity: 0; transition: opacity .3s ease;
+}
+#steering-picker.open .sp-backdrop { opacity: 1; }
+
+/* Sheet */
+.sp-sheet {
+  position: relative; z-index: 1;
+  background: linear-gradient(180deg, #0d1428 0%, #07101e 100%);
+  border-top: 1px solid rgba(0,229,255,.25);
+  border-radius: 22px 22px 0 0;
+  padding: 10px 20px calc(env(safe-area-inset-bottom,0px) + 24px);
+  transform: translateY(100%);
+  transition: transform .32s cubic-bezier(.22,.85,.4,1);
+  box-shadow: 0 -8px 40px rgba(0,0,0,.55);
+}
+#steering-picker.open .sp-sheet { transform: translateY(0); }
+
+/* Drag handle */
+.sp-handle {
+  width: 40px; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,.2);
+  margin: 0 auto 16px;
+}
+
+.sp-title {
+  text-align: center; margin: 0 0 4px;
+  font: 900 18px system-ui; letter-spacing: 5px;
+  color: var(--neon); text-shadow: 0 0 14px rgba(0,229,255,.5);
+}
+.sp-sub {
+  text-align: center; margin: 0 0 20px;
+  font-size: 12px; color: rgba(255,255,255,.55); letter-spacing: 1px;
+}
+
+/* Mode cards */
+.sp-cards { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+
+.sp-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border-radius: 14px; border: 2px solid rgba(255,255,255,.08);
+  background: rgba(255,255,255,.04); cursor: pointer;
+  transition: border-color .15s, background .15s, transform .1s;
+  text-align: left; color: #fff; width: 100%;
+}
+.sp-card:active { transform: scale(.98); }
+.sp-card.active {
+  border-color: var(--neon);
+  background: rgba(0,229,255,.12);
+  box-shadow: 0 0 16px rgba(0,229,255,.2);
+}
+
+/* Icon box */
+.sp-icon {
+  width: 68px; height: 36px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.sp-icon svg { width: 100%; height: 100%; display: block; }
+
+/* Text */
+.sp-info { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.sp-name { font: 800 13px system-ui; letter-spacing: 2px; color: #e8f4ff; }
+.sp-card.active .sp-name { color: var(--neon); }
+.sp-desc { font-size: 11px; color: rgba(255,255,255,.5); line-height: 1.4; }
+
+/* Tick */
+.sp-check {
+  width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 900;
+  border: 2px solid rgba(255,255,255,.18); color: transparent;
+  transition: border-color .15s, background .15s, color .15s;
+}
+.sp-card.active .sp-check {
+  border-color: var(--neon); background: var(--neon); color: #05070f;
+}
+
+/* Confirm button */
+.sp-confirm {
+  width: 100%; padding: 14px; font-size: 14px; letter-spacing: 4px;
+}
+
+/* ── Floating steering-switch button (shown during play on mobile) ── */
+#steer-switch-btn {
+  position: fixed;
+  bottom: calc(env(safe-area-inset-bottom,0px) + 16px);
+  left: 50%; transform: translateX(-50%);
+  z-index: 11;
+  pointer-events: auto;
+  display: flex; align-items: center; gap: 7px;
+  padding: 8px 16px; border-radius: 99px; border: 0; cursor: pointer;
+  background: rgba(10,20,45,.75);
+  border: 1.5px solid rgba(0,229,255,.4);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 4px 18px rgba(0,0,0,.4);
+  color: #cfe9ff; font: 700 10px system-ui; letter-spacing: 2px;
+  transition: opacity .2s, transform .15s;
+  -webkit-tap-highlight-color: transparent;
+}
+#steer-switch-btn:active { transform: translateX(-50%) scale(.93); }
+#steer-switch-btn .ssb-icon { font-size: 14px; }
+#steer-switch-btn.hidden { display: none !important; }
+
+/* Tighten on very small landscape screens */
+@media (orientation: landscape) and (max-height: 380px) {
+  .sp-sheet { padding-bottom: 10px; }
+  .sp-card  { padding: 10px 12px; }
+  .sp-icon  { width: 50px; height: 28px; }
 }
