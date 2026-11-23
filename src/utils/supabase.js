@@ -14,15 +14,15 @@ let _initPromise = null;
 const SUPABASE_CDN = 'https://esm.sh/@supabase/supabase-js@2';
 
 export function supabaseEnabled() {
-  return !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+  return !!(import.meta.env?.VITE_SUPABASE_URL && import.meta.env?.VITE_SUPABASE_ANON_KEY);
 }
 
 /** Resolves to a Supabase client, or null if not configured/unavailable. */
 export function getSupabase() {
   if (_initPromise) return _initPromise;
   _initPromise = (async () => {
-    const url = import.meta.env.VITE_SUPABASE_URL;
-    const anon = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    const url = import.meta.env?.VITE_SUPABASE_URL;
+    const anon = import.meta.env?.VITE_SUPABASE_ANON_KEY;
     if (!url || !anon) { _client = null; console.info('[Supabase] offline mode — .env credentials blank'); return null; }
     try {
       // @vite-ignore keeps Vite from trying to resolve/bundle this at build time;

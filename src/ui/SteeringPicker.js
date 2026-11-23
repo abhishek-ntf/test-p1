@@ -2,9 +2,8 @@
  * SteeringPicker — bottom-sheet mode selector.
  * Shown on first mobile launch and when the user taps the floating STEER button.
  *
- * Modes (3 options — tilt has been removed):
+ * Modes (2 options — touch/button only):
  *   arrows  – left/right arrow buttons (always works)
- *   motion  – phone gyroscope / accelerometer (DeviceOrientationEvent)
  *   wheel   – virtual steering wheel drag
  */
 
@@ -23,24 +22,6 @@ const MODES = [
     </svg>`,
     title: 'ARROWS',
     desc: 'Tap & hold the ‹ › buttons on-screen to steer',
-  },
-  {
-    id: 'motion',
-    icon: `<svg viewBox="0 0 50 50" fill="none">
-      <rect x="17" y="4" width="16" height="28" rx="3"
-        fill="rgba(0,80,160,.7)" stroke="#4fa3ff" stroke-width="2"/>
-      <circle cx="25" cy="38" r="2.5" fill="#4fa3ff"/>
-      <line x1="8" y1="18" x2="17" y2="18"
-        stroke="#00e5ff" stroke-width="2" stroke-linecap="round"/>
-      <polyline points="11,14 7,18 11,22" stroke="#00e5ff" stroke-width="2"
-        stroke-linecap="round" stroke-linejoin="round"/>
-      <line x1="33" y1="18" x2="42" y2="18"
-        stroke="#00e5ff" stroke-width="2" stroke-linecap="round"/>
-      <polyline points="39,14 43,18 39,22" stroke="#00e5ff" stroke-width="2"
-        stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>`,
-    title: 'MOTION',
-    desc: 'Tilt your physical phone left / right to steer — no touch needed',
   },
   {
     id: 'wheel',

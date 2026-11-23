@@ -12,18 +12,35 @@ create table if not exists public.scores (
   updated_at  timestamptz not null default now()
 );
 
--- Upsert that always keeps the BEST score/distance/level for a device.
+-- Upsert that always keeps the BEST score/distance/level for a user/device.
 create or replace function public.upsert_score(d text, n text, s int, dist int, lvl int)
 returns void as $$
+declare
+  target_id uuid;
+  existing_score int;
+  existing_dist int;
+  existing_lvl int;
 begin
-  insert into public.scores (device_id, name, score, distance, level, updated_at)
-  values (d, n, s, dist, lvl, now())
-  on conflict (device_id) do update
-    set name       = excluded.name,
-        score      = greatest(public.scores.score, excluded.score),
-        distance   = greatest(public.scores.distance, excluded.distance),
-        level      = greatest(public.scores.level, excluded.level),
-        updated_at = now();
+  -- Find existing row by user name (case-insensitive) or device_id
+  select id, score, distance, level into target_id, existing_score, existing_dist, existing_lvl
+  from public.scores
+  where lower(trim(name)) = lower(trim(n)) or device_id = d
+  order by score desc
+  limit 1;
+
+  if target_id is not null then
+    update public.scores
+    set name       = n,
+        device_id  = d,
+        score      = greatest(existing_score, s),
+        distance   = greatest(existing_dist, dist),
+        level      = greatest(existing_lvl, lvl),
+        updated_at = now()
+    where id = target_id;
+  else
+    insert into public.scores (device_id, name, score, distance, level, updated_at)
+    values (d, n, s, dist, lvl, now());
+  end if;
 end;
 $$ language plpgsql;
 

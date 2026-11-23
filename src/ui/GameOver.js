@@ -6,22 +6,26 @@ export class GameOver {
     this.root = document.createElement('div');
     this.root.className = 'overlay hidden';
     this.root.innerHTML = `
-      <div class="panel glass">
-        <h1 class="title small">GAME OVER</h1>
-        <div class="newbest hidden" data-k="newbest">★ NEW HIGH SCORE ★</div>
-        <div class="score-big" data-k="score">0</div>
-        <div class="over-rank">RANK <b data-k="rank">–</b> <span class="rank-note" data-k="rankNote"></span></div>
-        <div class="stats">
-          <div><small>DISTANCE</small><b data-k="dist">0 m</b></div>
-          <div><small>LEVEL</small><b data-k="level">1</b></div>
-          <div><small>BEST</small><b data-k="best">0</b></div>
+      <div class="panel glass gameover-panel">
+        <div class="go-header">
+          <h1 class="title small go-title">GAME OVER</h1>
+          <div class="newbest hidden" data-k="newbest">★ NEW HIGH SCORE ★</div>
+          <div class="score-big go-score" data-k="score">0</div>
+          <div class="over-rank">RANK <b data-k="rank">–</b> <span class="rank-note" data-k="rankNote"></span></div>
+          <div class="stats go-stats">
+            <div><small>DISTANCE</small><b data-k="dist">0 m</b></div>
+            <div><small>LEVEL</small><b data-k="level">1</b></div>
+            <div><small>BEST</small><b data-k="best">0</b></div>
+          </div>
         </div>
-        <div class="board full" data-k="board"></div>
-        <div class="go-actions">
-          <button type="button" class="btn" data-k="restart">RESTART</button>
-          <button type="button" class="btn ghost" data-k="menu">MENU</button>
+        <div class="board full go-board" data-k="board"></div>
+        <div class="go-footer">
+          <div class="go-actions">
+            <button type="button" class="btn" data-k="restart">RESTART</button>
+            <button type="button" class="btn ghost" data-k="menu">MENU</button>
+          </div>
+          <p class="hint go-hint">ENTER / R to restart</p>
         </div>
-        <p class="hint">ENTER / R to restart</p>
       </div>`;
     this.el = {};
     this.root.querySelectorAll('[data-k]').forEach((n) => { this.el[n.dataset.k] = n; });
@@ -43,10 +47,13 @@ export class GameOver {
     this.el.rankNote.classList.toggle('up', improved);
     this.el.board.innerHTML = boardHTML(rankedRows(leaderboard || [], meId));
     this.root.classList.remove('hidden');
-    // scroll the player's row into view
+    // scroll the player's row into view inside the board container
     requestAnimationFrame(() => {
       const me = this.el.board.querySelector('.row.me');
-      if (me && me.scrollIntoView) me.scrollIntoView({ block: 'center' });
+      if (me) {
+        const target = me.offsetTop - (this.el.board.clientHeight / 2) + (me.clientHeight / 2);
+        this.el.board.scrollTo({ top: Math.max(0, target), behavior: 'smooth' });
+      }
     });
   }
 

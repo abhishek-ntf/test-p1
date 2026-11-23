@@ -17,14 +17,22 @@ const LOCAL_RIVALS = [
 
 function localRows() {
   const best = GameStorage.getBest();
-  const me = { name: GameStorage.getUserName() || 'You', score: best.score, distance: best.distance, deviceId: GameStorage.getDeviceId() };
-  return [...LOCAL_RIVALS, me].sort((a, b) => b.score - a.score);
+  const cleanName = (GameStorage.getUserName() || 'You').trim();
+  const me = { name: cleanName, score: best.score, distance: best.distance, deviceId: GameStorage.getDeviceId() };
+  const userMap = new Map();
+  for (const r of [...LOCAL_RIVALS, me]) {
+    const key = (r.name || '').trim().toLowerCase();
+    if (!userMap.has(key) || r.score > userMap.get(key).score) {
+      userMap.set(key, r);
+    }
+  }
+  return Array.from(userMap.values()).sort((a, b) => b.score - a.score || (b.distance || 0) - (a.distance || 0));
 }
 
 export const Ranking = {
   enabled: supabaseEnabled(),
 
-  /** Top scores (name, score, distance, deviceId), best first. */
+  /** Top scores (name, score, distance, deviceId), best first. Keeps only the highest score per user. */
   async getLeaderboard(limit = 100) {
     const sb = await getSupabase();
     if (sb) {
@@ -32,32 +40,84 @@ export const Ranking = {
         .select('name,score,distance,device_id')
         .order('score', { ascending: false })
         .order('distance', { ascending: false })
-        .limit(limit);
+        .limit(limit * 2);
       if (!error && data) {
-        return data.map((r) => ({ name: r.name, score: r.score, distance: r.distance, deviceId: r.device_id }));
+        // Group by user name so each user only has their single highest score
+        const userMap = new Map();
+        for (const r of data) {
+          const key = (r.name || 'Player').trim().toLowerCase();
+          if (!userMap.has(key)) {
+            userMap.set(key, { name: r.name, score: r.score, distance: r.distance, deviceId: r.device_id });
+          } else {
+            const cur = userMap.get(key);
+            if (r.score > cur.score || (r.score === cur.score && (r.distance || 0) > (cur.distance || 0))) {
+              userMap.set(key, { name: r.name, score: r.score, distance: r.distance, deviceId: r.device_id });
+            }
+          }
+        }
+        return Array.from(userMap.values())
+          .sort((a, b) => b.score - a.score || (b.distance || 0) - (a.distance || 0))
+          .slice(0, limit);
       }
       console.warn('Leaderboard fetch failed, using local', error);
     }
     return localRows().slice(0, limit);
   },
 
-  /** Submit this run's result; keeps the best score per device (server-side upsert). */
+  /** Submit this run's result; keeps the single highest score for this user (never adds or overwrites with a lower score). */
   async submitScore({ deviceId, name, score, distance, level }) {
     score = Math.max(0, Math.floor(score || 0));
     distance = Math.max(0, Math.floor(distance || 0));
     level = Math.max(1, Math.floor(level || 1));
+    const cleanName = (name || GameStorage.getUserName() || 'Player').trim();
+
+    // Always update local storage with the maximum score
+    GameStorage.saveBest({ score, distance, level });
+
     const sb = await getSupabase();
     if (sb) {
       try {
-        const { error } = await sb.rpc('upsert_score', { d: deviceId, n: name, s: score, dist: distance, lvl: level });
+        // Check if this user (by name or deviceId) already has a score in Supabase
+        const { data: existingRows } = await sb.from(TABLE)
+          .select('id,name,score,distance,level')
+          .or(`device_id.eq.${deviceId},name.ilike.${cleanName}`)
+          .order('score', { ascending: false })
+          .limit(1);
+
+        if (existingRows && existingRows.length > 0) {
+          const prev = existingRows[0];
+          // Only update if current run's score is higher than their previous score!
+          if (score > prev.score) {
+            await sb.from(TABLE).update({
+              score,
+              distance: Math.max(prev.distance || 0, distance),
+              level: Math.max(prev.level || 1, level),
+              device_id: deviceId,
+              name: cleanName,
+              updated_at: new Date().toISOString(),
+            }).eq('id', prev.id);
+          }
+          // If the new score is lower or equal, keep the previous highest score intact!
+          return;
+        }
+
+        // If no previous record exists for this user, insert or call upsert_score
+        const { error } = await sb.rpc('upsert_score', { d: deviceId, n: cleanName, s: score, dist: distance, lvl: level });
         if (!error) return;
         throw error;
       } catch (e) {
-        // Fallback: plain upsert (keeps a single row per device, may overwrite).
-        try { await sb.from(TABLE).upsert({ device_id: deviceId, name, score, distance, level }, { onConflict: 'device_id' }); } catch {}
+        // Fallback: plain insert if not already present
+        try {
+          await sb.from(TABLE).insert({
+            device_id: deviceId,
+            name: cleanName,
+            score,
+            distance,
+            level,
+          });
+        } catch {}
       }
     }
-    GameStorage.saveBest({ score, distance, level });
   },
 
   /** Live updates when anyone scores. Returns an unsubscribe fn. */
@@ -95,11 +155,28 @@ export function rankFor(rows, score) {
  * scores; the player's own row is replaced with their live score.
  */
 export function buildLiveRows(scores, meId, meName, liveScore, total = 10) {
-  let entries = (scores || []).map((s) => ({ name: s.name, score: s.score, deviceId: s.deviceId, isMe: s.deviceId === meId }));
+  const cleanMeName = (meName || 'You').trim();
+  const currentLive = Math.max(0, Math.floor(liveScore || 0));
+
+  // Deduplicate incoming scores by player name so each user only appears once
+  const userMap = new Map();
+  for (const s of (scores || [])) {
+    const key = (s.name || '').trim().toLowerCase();
+    if (!userMap.has(key) || s.score > userMap.get(key).score) {
+      userMap.set(key, { name: s.name, score: s.score, deviceId: s.deviceId, isMe: s.deviceId === meId || key === cleanMeName.toLowerCase() });
+    }
+  }
+
+  const entries = Array.from(userMap.values());
   const meIdx = entries.findIndex((e) => e.isMe);
-  const meScore = Math.max(Math.floor(liveScore || 0), meIdx >= 0 ? entries[meIdx].score : 0);
-  if (meIdx >= 0) entries[meIdx].score = meScore;
-  else entries.push({ name: meName || 'You', score: meScore, deviceId: meId, isMe: true });
+  const meScore = Math.max(currentLive, meIdx >= 0 ? entries[meIdx].score : 0);
+  if (meIdx >= 0) {
+    entries[meIdx].score = meScore;
+    entries[meIdx].name = cleanMeName;
+  } else {
+    entries.push({ name: cleanMeName, score: meScore, deviceId: meId, isMe: true });
+  }
+
   entries.sort((a, b) => b.score - a.score || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   let rank = 0, last = Infinity;
   entries.forEach((e, i) => { if (e.score !== last) { rank = i + 1; last = e.score; } e.rank = rank; });

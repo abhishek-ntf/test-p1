@@ -4,9 +4,23 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
 
 const MEDAL = ['\u{1F947}', '\u{1F948}', '\u{1F949}']; // 🥇🥈🥉
 
-/** Convert raw score rows into ranked rows, flagging the current device. */
+/** Convert raw score rows into ranked rows, flagging the current device. Keeps only the highest score per user name. */
 export function rankedRows(rows, meId) {
-  const sorted = [...(rows || [])].sort((a, b) => b.score - a.score || (b.distance || 0) - (a.distance || 0));
+  // Deduplicate by player name so each user only appears once with their single best score
+  const userMap = new Map();
+  for (const r of (rows || [])) {
+    const key = (r.name || 'Player').trim().toLowerCase();
+    if (!userMap.has(key)) {
+      userMap.set(key, r);
+    } else {
+      const prev = userMap.get(key);
+      if (r.score > prev.score || (r.score === prev.score && (r.distance || 0) > (prev.distance || 0))) {
+        userMap.set(key, r);
+      }
+    }
+  }
+
+  const sorted = Array.from(userMap.values()).sort((a, b) => b.score - a.score || (b.distance || 0) - (a.distance || 0));
   let rank = 0, last = Infinity;
   const out = [];
   sorted.forEach((r, i) => {
