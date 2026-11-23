@@ -1,18 +1,26 @@
 /**
- * Local-only storage for device identity, the one-time username, the local
- * best (offline fallback) and settings. No auth, no backend — just this device.
+ * Local-only storage for device identity, the username, local best,
+ * audio settings, onboarding state, and controls preferences.
  */
 const DEVICE_KEY = 'neon-highway:device-id';
 const NAME_KEY = 'neon-highway:username';
 const REG_KEY = 'neon-highway:registered';
 const BEST_KEY = 'neon-highway:best';
 const SETTINGS_KEY = 'neon-highway:settings';
+const ONBOARD_KEY = 'neon-highway:onboarded';
+const MUTED_KEY = 'neon-highway:muted';
+const VOLUME_KEY = 'neon-highway:volume';
 
-const DEFAULT_SETTINGS = { controlMode: 'wheel', tiltSensitivity: 1.5, tiltInvert: false };
+const DEFAULT_SETTINGS = { controlMode: 'arrows', tiltSensitivity: 1.5, tiltInvert: false };
 
 function uuid() {
   try { if (crypto && crypto.randomUUID) return crypto.randomUUID(); } catch {}
   return 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function generateDefaultName() {
+  const num = Math.floor(1000 + Math.random() * 9000);
+  return `Racer_${num}`;
 }
 
 export const GameStorage = {
@@ -27,9 +35,34 @@ export const GameStorage = {
     if (!id) { id = uuid(); this._ss(DEVICE_KEY, id); }
     return id;
   },
-  getUserName() { return this._gs(NAME_KEY, ''); },
-  setUserName(name) { this._ss(NAME_KEY, name); this._ss(REG_KEY, '1'); },
+
+  getUserName() {
+    let name = this._gs(NAME_KEY, '');
+    if (!name) {
+      name = generateDefaultName();
+      this.setUserName(name);
+    }
+    return name;
+  },
+
+  setUserName(name) {
+    const trimmed = (name || '').trim() || generateDefaultName();
+    this._ss(NAME_KEY, trimmed);
+    this._ss(REG_KEY, '1');
+    return trimmed;
+  },
+
   isRegistered() { return this._gs(REG_KEY) === '1'; },
+
+  /** Onboarding completion state */
+  hasCompletedOnboarding() { return this._gs(ONBOARD_KEY) === '1'; },
+  setOnboarded(completed = true) { this._ss(ONBOARD_KEY, completed ? '1' : '0'); },
+
+  /** Audio preferences */
+  isMuted() { return this._gs(MUTED_KEY) === '1'; },
+  setMuted(muted) { this._ss(MUTED_KEY, muted ? '1' : '0'); },
+  getVolume() { return this._g(VOLUME_KEY, 0.8); },
+  setVolume(vol) { this._s(VOLUME_KEY, Math.max(0, Math.min(1, vol))); },
 
   /** Local best (used as offline fallback + before first Supabase sync). */
   getBest() {
@@ -39,6 +72,7 @@ export const GameStorage = {
     }
     return { score: 0, distance: 0, km: 0, level: 1 };
   },
+
   saveBest(rec) {
     const c = this.getBest();
     const score = Math.max(c.score, Math.floor(rec.score || 0));

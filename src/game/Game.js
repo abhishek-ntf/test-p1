@@ -10,13 +10,15 @@ import { MobileControls } from '../controls/MobileControls.js';
 import { GameHUD } from '../ui/GameHUD.js';
 import { MainMenu } from '../ui/MainMenu.js';
 import { GameOver } from '../ui/GameOver.js';
+import { PauseMenu } from '../ui/PauseMenu.js';
 import { Orientation } from '../ui/Orientation.js';
-import { NamePrompt } from '../ui/NamePrompt.js';
 import { Celebration } from '../ui/Celebration.js';
 import { SteeringPicker } from '../ui/SteeringPicker.js';
+import { OnboardingOverlay } from '../ui/OnboardingOverlay.js';
 import { GameStorage } from '../utils/Storage.js';
 import { Ranking, buildLiveRows, rankFor } from '../utils/Ranking.js';
 import { AudioManager } from '../audio/AudioManager.js';
+import { CrazyGamesSDK } from '../utils/CrazyGamesSDK.js';
 import {
   CRUISE_SPEED, MIN_SPEED, NITRO_SPEED, ACCEL, BRAKE_DECEL, COAST_DECEL, NITRO_ACCEL,
   NITRO_MAX, NITRO_DRAIN, NITRO_RECHARGE, NITRO_MIN_START, KMH_FACTOR,
@@ -30,8 +32,11 @@ const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const approach = (v, target, step) => (v < target ? Math.min(target, v + step) : Math.max(target, v - step));
 
 export class Game {
-  constructor(canvas, pauseEl = null) {
-    this.pauseEl = pauseEl;
+  constructor(canvas) {
+    this.canvas = canvas;
+    this.cg = CrazyGamesSDK.getInstance();
+    this.cg.init();
+
     this.sm = new SceneManager(canvas);
     this.road = new Road(this.sm.scene, this.sm.renderer);
     this.environment = new Environment(this.sm.scene, this.sm.renderer);
@@ -47,40 +52,98 @@ export class Game {
     });
     this.orient = new Orientation(document.body);
 
-    // Steering picker (mobile only – shown on first launch or when user taps STEER button)
-    this.steerPicker = new SteeringPicker(document.body, {
-      onSelect: (mode) => this._onSteerModeSelect(mode),
-    });
-    this.kb.onPause = () => this.togglePause();
-    this.kb.onAction = (code) => {
-      if (this.state === MENU && code === 'Enter') this.startRace();
-      else if (this.state === OVER && this.overShown) this.startRace();
-    };
-
-    // ---- identity (device id + one-time name, no auth) ----
+    // Identity & settings
     this.deviceId = GameStorage.getDeviceId();
     this.name = GameStorage.getUserName();
     this.settings = GameStorage.getSettings();
 
-    // ---- ranking state ----
+    // Check if user is logged into CrazyGames
+    this.cg.getUser().then((u) => {
+      if (u && u.username) {
+        this.name = GameStorage.setUserName(u.username);
+      }
+    });
+
+    // UI overlays
+    this.onboarding = new OnboardingOverlay(document.body, {
+      onComplete: (skipped) => this._onOnboardingComplete(skipped),
+      isTouch: this.touch.enabled,
+    });
+
+    this.pauseMenu = new PauseMenu(document.body, {
+      onResume: () => this.togglePause(),
+      onRestart: () => this.startRace(),
+      onMenu: () => this._enterMenu(),
+      onToggleMute: () => this.toggleMute(),
+      onToggleFullscreen: () => this.toggleFullscreen(),
+      onHowToPlay: () => {
+        this.pauseMenu.hide();
+        this.onboarding.start();
+      },
+    });
+
+    this.hud = new GameHUD(document.body, {
+      onPause: () => this.togglePause(),
+      onTheme: () => this.toggleTheme(),
+      onToggleMute: () => this.toggleMute(),
+      onToggleFullscreen: () => this.toggleFullscreen(),
+      onHelp: () => {
+        if (this.state === PLAYING) {
+          this.onboarding.start();
+        }
+      },
+    });
+    this.hud.setMuted(this.audio.isMuted);
+
+    this.menu = new MainMenu(document.body, {
+      onStart: () => this.startRace(),
+      onSettingsChange: (p) => this._onSettingsChange(p),
+      onCalibrate: () => this.touch.calibrate(),
+      onReplayTutorial: () => {
+        this.menu.hide();
+        this.startRace(true);
+      },
+      onToggleMute: () => this.toggleMute(),
+      onToggleFullscreen: () => this.toggleFullscreen(),
+    });
+
+    this.gameOverUI = new GameOver(document.body, {
+      onRestart: () => this.startRace(),
+      onMenu: () => this._enterMenu(),
+    });
+
+    this.steerPicker = new SteeringPicker(document.body, {
+      onSelect: (mode) => this._onSteerModeSelect(mode),
+    });
+
+    // Wire keyboard actions
+    this.kb.onPause = () => this.togglePause();
+    this.kb.onMute = () => this.toggleMute();
+    this.kb.onFullscreen = () => this.toggleFullscreen();
+    this.kb.onKeyActivity = (action, isDown) => {
+      this.onboarding.handleAction(action, isDown);
+    };
+    this.kb.onAction = (code) => {
+      if (this.state === MENU && code === 'Enter') this.startRace();
+      else if (this.state === OVER && this.overShown) this.startRace();
+      else if (this.paused && (code === 'Enter' || code === 'KeyR')) this.startRace();
+    };
+
+    // Fullscreen change listener
+    this._onFsChange = () => {
+      const isFs = !!document.fullscreenElement;
+      this.hud.setFullscreen(isFs);
+    };
+    document.addEventListener('fullscreenchange', this._onFsChange);
+
+    // Ranking state
     this._globalScores = [];
     this._overtaken = new Set();
     this._pbNotified = false;
     this._overReady = false;
     this._overPayload = null;
 
-    this.hud = new GameHUD(document.body, { onPause: () => this.togglePause(), onTheme: () => this.toggleTheme() });
-    this.menu = new MainMenu(document.body, {
-      onStart: () => this.startRace(),
-      onSettingsChange: (p) => this._onSettingsChange(p),
-      onCalibrate: () => this.touch.calibrate(),
-    });
-    this.gameOverUI = new GameOver(document.body, {
-      onRestart: () => this.startRace(),
-      onMenu: () => this._enterMenu(),
-    });
-
-    // run state
+    // Run state
     this.state = MENU;
     this.paused = false;
     this.lives = LIVES_MAX; this.distance = 0; this.bonus = 0; this.score = 0; this.level = 1;
@@ -95,66 +158,71 @@ export class Game {
       this.environment.setTheme(theme);
       this.player.setNight(theme.headlights);
     });
-    this.sm.setTheme('day');
+    this.sm.setTheme('night'); // Cyberpunk neon highway default
 
-    this._onVis = () => { if (document.hidden && this.state === PLAYING && !this.paused) this.togglePause(); };
+    this._onVis = () => {
+      if (document.hidden) {
+        if (this.state === PLAYING && !this.paused) this.togglePause();
+        if (this.audio.ctx && this.audio.ctx.state === 'running') this.audio.ctx.suspend();
+      } else {
+        if (this.audio.ctx && this.audio.ctx.state === 'suspended') this.audio.ctx.resume();
+      }
+    };
     document.addEventListener('visibilitychange', this._onVis);
+
     this._unlockAudio = () => this.audio.ensure();
     window.addEventListener('pointerdown', this._unlockAudio);
     window.addEventListener('keydown', this._unlockAudio);
 
-    // Live ranking subscription (refreshes cache + the open menu / live panel).
+    // Leaderboard
     this._unsubRank = Ranking.subscribe((rows) => {
       this._globalScores = rows;
       this._onRankUpdate();
     });
     Ranking.getLeaderboard(100).then((rows) => { this._globalScores = rows; this._onRankUpdate(); });
 
-    // entry — name prompt only on first launch, otherwise straight to menu
-    if (GameStorage.isRegistered()) {
-      // On mobile: show steering picker on very first game launch (no saved controlMode)
-      const s = GameStorage.getSettings();
-      if (this.touch.enabled && !s.controlMode) {
-        // Show picker, then enter menu after selection
-        this.steerPicker.show('arrows');
-        // override onSelect to enter menu after first selection
-        this.steerPicker.onSelect = (mode) => {
-          this._onSteerModeSelect(mode);
-          // restore normal onSelect
-          this.steerPicker.onSelect = (m) => this._onSteerModeSelect(m);
-          this._enterMenu();
-        };
-      } else {
-        this._enterMenu();
-      }
+    // CrazyGames Onboarding entry:
+    // If user has not completed onboarding, land directly in gameplay with tutorial active!
+    if (!GameStorage.hasCompletedOnboarding()) {
+      this.startRace(true);
     } else {
-      this._showNamePrompt();
+      this._enterMenu();
     }
 
     this.loop = new GameLoop((dt) => this.update(dt), () => this.sm.render());
   }
 
-  run() { this.loop.start(); }
-  toggleTheme() { this.sm.setTheme(this.sm.themeName === 'day' ? 'night' : 'day'); }
+  run() {
+    this.loop.start();
+  }
 
-  _showNamePrompt() {
-    this.namePrompt = new NamePrompt(document.body, { onSubmit: (n) => {
-      GameStorage.setUserName(n);
-      this.name = n;
-      if (this.namePrompt) { this.namePrompt.remove(); this.namePrompt = null; }
-      // On mobile first install: show steering picker before the menu
-      if (this.touch.enabled) {
-        this.steerPicker.show('arrows');
-        this.steerPicker.onSelect = (mode) => {
-          this._onSteerModeSelect(mode);
-          this.steerPicker.onSelect = (m) => this._onSteerModeSelect(m);
-          this._enterMenu();
-        };
-      } else {
-        this._enterMenu();
-      }
-    }});
-    setTimeout(() => { if (this.namePrompt) this.namePrompt.focus(); }, 50);
+  toggleTheme() {
+    this.sm.setTheme(this.sm.themeName === 'day' ? 'night' : 'day');
+  }
+
+  toggleMute() {
+    const isMuted = this.audio.toggleMute();
+    this.hud.setMuted(isMuted);
+    this.pauseMenu.setMuted(isMuted);
+    this.menu.setMuted(isMuted);
+    return isMuted;
+  }
+
+  toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }
+
+  _onOnboardingComplete(skipped) {
+    if (skipped) {
+      this.hud.banner('TUTORIAL SKIPPED', 'good');
+    } else {
+      this.hud.banner('TUTORIAL COMPLETE! GO!', 'good');
+      this.cg.happytime();
+    }
   }
 
   _onSettingsChange(partial) {
@@ -171,105 +239,163 @@ export class Game {
   _onSteerModeSelect(mode) {
     this.touch.setMode(mode);
     this.settings = GameStorage.saveSettings({ controlMode: mode });
-    // For motion mode on iOS, calibrate() triggers the permission request
     if (mode === 'motion') this.touch.calibrate();
   }
 
-  /** Called whenever the cached leaderboard changes (realtime or initial fetch). */
   _onRankUpdate() {
     if (this.state === MENU && this.menu) this.menu.updateRanks(this._globalScores);
   }
 
-  // ---------- state transitions ----------
+  // ---------- State transitions ----------
   _enterMenu() {
     this.state = MENU;
+    this.cg.gameplayStop();
     this.traffic.clear();
     this.player.reset();
-    this.cruise = CRUISE_SPEED; this.speed = CRUISE_SPEED;
-    this.hud.hide(); this.gameOverUI.hide();
+    this.cruise = CRUISE_SPEED;
+    this.speed = CRUISE_SPEED;
+    this.hud.hide();
+    this.gameOverUI.hide();
+    this.pauseMenu.hide();
+    this.onboarding.hide();
+
     this.name = GameStorage.getUserName();
     this.settings = GameStorage.getSettings();
     const best = GameStorage.getBest();
     const board = this._globalScores && this._globalScores.length ? this._globalScores : null;
+
     this.menu.show({
-      best, isTouch: this.touch.enabled, name: this.name,
-      leaderboard: board, settings: this.settings,
+      best,
+      isTouch: this.touch.enabled,
+      name: this.name,
+      leaderboard: board,
+      settings: this.settings,
+      isMuted: this.audio.isMuted,
     });
-    // (re)fetch the latest leaderboard for the RANKS tab
+
     Ranking.getLeaderboard(100).then((rows) => {
       this._globalScores = rows;
       if (this.state === MENU) this.menu.updateRanks(rows);
     });
   }
 
-  startRace() {
+  startRace(startTutorial = false) {
     this.audio.ensure();
-    this.kb.reset(); this.touch.reset();
+    this.cg.gameplayStart();
+    this.kb.reset();
+    this.touch.reset();
     this.paused = false;
-    if (this.pauseEl) this.pauseEl.classList.add('hidden');
-    this.lives = LIVES_MAX; this.distance = 0; this.bonus = 0; this.score = 0; this.level = 1;
-    this.cruise = CRUISE_SPEED; this.speed = CRUISE_SPEED;
-    this.nitro = NITRO_MAX; this.nitroActive = false;
-    this.kbHold = 0; this.freeSteer = false; this.shake = 0;
-    this.overShown = false; this.newBest = false; this.goTimer = 0;
-    this._overReady = false; this._overPayload = null;
+
+    this.lives = LIVES_MAX;
+    this.distance = 0;
+    this.bonus = 0;
+    this.score = 0;
+    this.level = 1;
+    this.cruise = CRUISE_SPEED;
+    this.speed = CRUISE_SPEED;
+    this.nitro = NITRO_MAX;
+    this.nitroActive = false;
+    this.kbHold = 0;
+    this.freeSteer = false;
+    this.shake = 0;
+    this.overShown = false;
+    this.newBest = false;
+    this.goTimer = 0;
+    this._overReady = false;
+    this._overPayload = null;
 
     this.name = GameStorage.getUserName();
     this._overtaken = new Set();
     this._pbNotified = false;
-    // make sure we have rival data for the live panel
+
     if (!this._globalScores || !this._globalScores.length) {
       Ranking.getLeaderboard(100).then((rows) => { this._globalScores = rows; });
     }
 
     this.player.reset();
     this.traffic.reset(this.level, this.cruise);
-    this.menu.hide(); this.gameOverUI.hide();
+
+    this.menu.hide();
+    this.gameOverUI.hide();
+    this.pauseMenu.hide();
+
     this.hud.setLives(LIVES_MAX, false);
     this.hud.setBest(GameStorage.getBest().score);
+    this.hud.setGoal('🎯 GOAL: REACH LEVEL 2 (1,000m)');
     this.hud.renderLiveRank(buildLiveRows(this._globalScores, this.deviceId, this.name, 0));
     this.hud.show();
+
     this.state = PLAYING;
     this.orient.requestLandscape();
+
+    if (startTutorial) {
+      this.onboarding.start();
+    } else {
+      this.onboarding.hide();
+    }
   }
 
   togglePause() {
     if (this.state !== PLAYING) return;
     this.paused = !this.paused;
-    this.kb.reset(); this.touch.reset();
-    if (this.pauseEl) this.pauseEl.classList.toggle('hidden', !this.paused);
+    this.kb.reset();
+    this.touch.reset();
+
+    if (this.paused) {
+      this.pauseMenu.show(this.audio.isMuted);
+      this.cg.gameplayStop();
+    } else {
+      this.pauseMenu.hide();
+      this.cg.gameplayStart();
+    }
   }
 
   _gameOver() {
     this.state = OVER;
-    this.goTimer = 0; this.overShown = false; this._overReady = false;
+    this.cg.gameplayStop();
+    this.goTimer = 0;
+    this.overShown = false;
+    this._overReady = false;
     this.traffic.stopSpawning();
     this.nitroActive = false;
-    this._endRun(); // async: submit + fetch full leaderboard
+    this.onboarding.hide();
+    this._endRun();
     this.hud.banner('GAME OVER', 'bad');
   }
 
   async _endRun() {
     const prevBest = GameStorage.getBest();
     const prevRank = rankFor(this._globalScores, prevBest.score);
+
     await Ranking.submitScore({
-      deviceId: this.deviceId, name: this.name,
-      score: this.score, distance: this.distance, level: this.level,
+      deviceId: this.deviceId,
+      name: this.name,
+      score: this.score,
+      distance: this.distance,
+      level: this.level,
     });
+
     GameStorage.saveBest({ score: this.score, distance: this.distance, level: this.level });
-    // refresh cache with the new score included
     this._globalScores = await Ranking.getLeaderboard(100);
+
     const newBest = this.score > prevBest.score;
     const newRank = rankFor(this._globalScores, Math.max(prevBest.score, this.score));
+
     this._overPayload = {
-      score: this.score, distance: this.distance, level: this.level,
-      best: Math.max(prevBest.score, this.score), newBest,
-      prevRank, newRank, leaderboard: this._globalScores, meId: this.deviceId,
+      score: this.score,
+      distance: this.distance,
+      level: this.level,
+      best: Math.max(prevBest.score, this.score),
+      newBest,
+      prevRank,
+      newRank,
+      leaderboard: this._globalScores,
+      meId: this.deviceId,
     };
     this._overReady = true;
   }
 
-  // ---------- per-frame ----------
+  // ---------- Per-frame loop ----------
   _readInput() {
     const a = this.kb.state, b = this.touch.state;
     return { accel: a.accel || b.accel, brake: a.brake || b.brake, nitro: a.nitro || b.nitro };
@@ -287,12 +413,13 @@ export class Game {
       this.kbHold += dt;
       if (this.kbHold > HOLD_FREE) { p.steerBy(ks * LAT_SPEED * dt); free = true; }
     } else this.kbHold = 0;
-    if (this.touch.steering) { // wheel / buttons / tilt: proportional steering
+
+    if (this.touch.steering) {
       const s = this.touch.state.steer;
       p.steerBy(Math.sign(s) * Math.pow(Math.abs(s), 1.25) * LAT_SPEED * dt);
       free = true;
     }
-    if (!free && this.freeSteer) p.snapToLane(); // lane assist on release
+    if (!free && this.freeSteer) p.snapToLane();
     this.freeSteer = free;
   }
 
@@ -301,6 +428,7 @@ export class Game {
       this.audio.update({ active: false, speed: 0, nitro: false });
       return;
     }
+
     const playing = this.state === PLAYING;
     const inp = playing ? this._readInput() : NO_INPUT;
 
@@ -330,21 +458,27 @@ export class Game {
     else { target = this.cruise; rate = this.speed > this.cruise ? COAST_DECEL : ACCEL; }
     this.speed = approach(this.speed, target, rate * dt);
 
-    // World
+    // World updates
     this.player.setControlState(this.nitroActive, inp.brake);
     this.road.update(dt, this.speed);
     this.environment.update(dt, this.speed);
     this.player.update(dt, this.speed);
     this.traffic.update(dt, this.speed, this.player.x);
     this.effects.update(dt);
+
     this.audio.update({
       active: this.state !== MENU && !this.paused,
       speed: this.speed,
       nitro: this.nitroActive && playing,
     });
 
-    if (playing) { this._updateProgress(dt); this._checkCollisions(); this._updateRanking(); }
-    else if (this.state === OVER) this._updateOver(dt);
+    if (playing) {
+      this._updateProgress(dt);
+      this._checkCollisions();
+      this._updateRanking();
+    } else if (this.state === OVER) {
+      this._updateOver(dt);
+    }
 
     this._updateCamera(dt);
     if (this.state !== MENU) this._updateHud();
@@ -358,24 +492,27 @@ export class Game {
     if (lvl > this.level) this._levelUp(lvl);
   }
 
-  /** Live ranking panel + overtake / personal-best celebration. */
   _updateRanking() {
     const score = this.score;
     this.hud.renderLiveRank(buildLiveRows(this._globalScores, this.deviceId, this.name, score));
+
     for (const o of this._globalScores) {
       if (o.deviceId === this.deviceId) continue;
       if (o.score > 0 && o.score <= score && !this._overtaken.has(o.deviceId)) {
         this._overtaken.add(o.deviceId);
         this.hud.toast(`You just overtook ${o.name}!`);
         Celebration.burst();
+        this.cg.happytime();
       }
     }
+
     const me = this._globalScores.find((s) => s.deviceId === this.deviceId);
     const pb = me ? me.score : GameStorage.getBest().score;
     if (!this._pbNotified && pb > 0 && score > pb) {
       this._pbNotified = true;
       this.hud.toast('NEW PERSONAL BEST!');
       Celebration.burst();
+      this.cg.happytime();
     }
   }
 
@@ -386,13 +523,19 @@ export class Game {
     this.cruise = Math.min(CRUISE_SPEED + (l - 1) * CRUISE_PER_LEVEL, MAX_CRUISE);
     this.traffic.setLevel(l, this.cruise);
     let text = `LEVEL ${l}`;
-    if (l % 3 === 0 && this.lives < LIVES_MAX) { this.lives++; this.hud.setLives(this.lives, false); text += ' · +1 LIFE'; }
+    if (l % 3 === 0 && this.lives < LIVES_MAX) {
+      this.lives++;
+      this.hud.setLives(this.lives, false);
+      text += ' · +1 LIFE';
+    }
     this.hud.banner(text, 'good');
+    this.cg.happytime();
   }
 
   _checkCollisions() {
     const p = this.player;
     if (p.invincibleT > 0) return;
+
     const car = this.traffic.hit(p.x, PLAYER_HW, PLAYER_HL);
     if (car) {
       if (this.speed < car.v || car.nudgeT > 0) {
@@ -405,7 +548,10 @@ export class Game {
       this._foul('car', car);
       return;
     }
-    if (Math.abs(p.x) > RAIL_HIT_X) this._foul('rail', null);
+
+    if (Math.abs(p.x) > RAIL_HIT_X) {
+      this._foul('rail', null);
+    }
   }
 
   _foul(kind, car) {
@@ -431,7 +577,10 @@ export class Game {
       this.speed *= 0.75;
       this.hud.banner('RAILING FOUL!', 'bad');
     }
-    if (this.lives <= 0) this._gameOver();
+
+    if (this.lives <= 0) {
+      this._gameOver();
+    }
   }
 
   _updateOver(dt) {
@@ -450,6 +599,11 @@ export class Game {
     h.setLevel(this.level, (km % LEVEL_KM) / LEVEL_KM);
     h.setSpeed(Math.round(this.speed * KMH_FACTOR));
     h.setNitro((this.nitro / NITRO_MAX) * 100, this.nitroActive);
+
+    // Goal tracking
+    const nextTargetM = this.level * 1000;
+    const remainingM = Math.max(0, nextTargetM - Math.floor(this.distance));
+    h.setGoal(`🎯 NEXT LEVEL: ${remainingM}m`);
   }
 
   _updateCamera(dt) {
@@ -471,13 +625,24 @@ export class Game {
 
   dispose() {
     document.removeEventListener('visibilitychange', this._onVis);
+    document.removeEventListener('fullscreenchange', this._onFsChange);
     window.removeEventListener('pointerdown', this._unlockAudio);
     window.removeEventListener('keydown', this._unlockAudio);
     if (this._unsubRank) this._unsubRank();
+
     this.audio.dispose();
     this.loop.dispose();
-    this.kb.dispose(); this.touch.dispose(); this.orient.dispose(); this.steerPicker.dispose();
-    this.effects.dispose(); this.traffic.dispose();
-    this.player.dispose(); this.environment.dispose(); this.road.dispose(); this.sm.dispose();
+    this.kb.dispose();
+    this.touch.dispose();
+    this.orient.dispose();
+    this.steerPicker.dispose();
+    this.pauseMenu.dispose();
+    this.onboarding.dispose();
+    this.effects.dispose();
+    this.traffic.dispose();
+    this.player.dispose();
+    this.environment.dispose();
+    this.road.dispose();
+    this.sm.dispose();
   }
 }
